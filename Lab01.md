@@ -1,6 +1,6 @@
 ### Lab 01
-# Name: Thomas Youg
-# Email: young.665@wright.edu
+### Name: Thomas Youg
+### Email: young.665@wright.edu
 ## Part 1 Answers
 # Command to make a directory named DirA: mkdir DirA
 # Command to make a directory named Dir B: mkdir Dir B
