@@ -3,96 +3,91 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Decrypt message</title>
+<title>Encrypt & Decrypt</title>
 <style>
 body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; padding:18px; }
-textarea { width:100%; box-sizing:border-box; }
-input[type=password] { width:100%; box-sizing:border-box; padding:8px; }
+textarea, input[type=password] { width:100%; box-sizing:border-box; padding:8px; margin-bottom:12px; }
 pre { background:#f1f1f1; padding:10px; border-radius:8px; white-space:pre-wrap; }
-button { padding:10px 14px; font-size:16px; border-radius:8px; }
+button { padding:10px 14px; font-size:16px; border-radius:8px; margin-right:10px; }
 </style>
 </head>
 <body>
-<h2>Decrypt message</h2>
-<p>Paste the one-line base64 ciphertext you received, enter the passphrase, and click Decrypt.</p>
+<h2>Encrypt & Decrypt Message</h2>
 
-<label>Base64 ciphertext</label><br>
-<textarea id="b64" rows="6" placeholder="Paste the one-line base64 here"></textarea><br><br>
+<label>Message to encrypt:</label>
+<textarea id="msg" rows="3" placeholder="Type your message here"></textarea>
 
-<label>Passphrase</label><br>
-<input id="pw" type="password" placeholder="Type passphrase"><br><br>
+<label>Passphrase:</label>
+<input id="pw" type="password" placeholder="Type passphrase">
 
-<button id="go">Decrypt</button>
-<p id="status"></p>
+<button id="encryptBtn">Encrypt</button>
+<button id="decryptBtn">Decrypt</button>
+
+<p>Encrypted/Decrypted output:</p>
 <pre id="out"></pre>
 
 <script>
 async function deriveKey(passphrase, salt) {
     const enc = new TextEncoder();
     const keyMaterial = await crypto.subtle.importKey(
-        "raw",
-        enc.encode(passphrase),
-        {name: "PBKDF2"},
-        false,
-        ["deriveKey"]
+        "raw", enc.encode(passphrase), {name: "PBKDF2"}, false, ["deriveKey"]
     );
     return crypto.subtle.deriveKey(
-        {
-            name: "PBKDF2",
-            salt: salt,
-            iterations: 32768,
-            hash: "SHA-256"
-        },
+        {name:"PBKDF2", salt: salt, iterations: 32768, hash:"SHA-256"},
         keyMaterial,
-        { name: "AES-GCM", length: 256 },
+        { name:"AES-GCM", length: 256 },
         false,
-        ["decrypt"]
+        ["encrypt", "decrypt"]
     );
 }
 
-function b64ToBytes(b64){
-    return Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
+function concatBuffers(...buffers) {
+    let totalLen = buffers.reduce((sum,b)=>sum+b.byteLength,0);
+    let result = new Uint8Array(totalLen);
+    let offset = 0;
+    for (let b of buffers) { result.set(new Uint8Array(b), offset); offset+=b.byteLength; }
+    return result;
 }
 
-function bytesToStr(b){
-    return new TextDecoder().decode(b);
-}
+function bytesToBase64(bytes) { return btoa(String.fromCharCode(...new Uint8Array(bytes))); }
+function base64ToBytes(b64) { return Uint8Array.from(atob(b64), c=>c.charCodeAt(0)); }
 
-document.getElementById('go').onclick = async () => {
+document.getElementById('encryptBtn').onclick = async () => {
+    const msg = document.getElementById('msg').value;
+    const pw  = document.getElementById('pw').value;
     const out = document.getElementById('out');
-    const status = document.getElementById('status');
-    out.textContent = '';
-    status.textContent = 'Working...';
+    if (!msg || !pw) { out.textContent="Message & passphrase required"; return; }
+
+    const enc = new TextEncoder();
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const nonce = crypto.getRandomValues(new Uint8Array(12));
+
+    const key = await deriveKey(pw, salt);
+    const ctBuffer = await crypto.subtle.encrypt({name:"AES-GCM", iv:nonce}, key, enc.encode(msg));
+
+    // store as salt|nonce|ciphertext
+    const blob = concatBuffers(salt.buffer, nonce.buffer, ctBuffer);
+    out.textContent = bytesToBase64(blob);
+};
+
+document.getElementById('decryptBtn').onclick = async () => {
+    const b64 = document.getElementById('out').textContent.trim();
+    const pw  = document.getElementById('pw').value;
+    const out = document.getElementById('out');
+    if (!b64 || !pw) { out.textContent="Ciphertext & passphrase required"; return; }
+
     try {
-        const b64 = document.getElementById('b64').value.trim();
-        const pw = document.getElementById('pw').value;
-        if (!b64 || !pw) throw "Provide both ciphertext and passphrase.";
-
-        const blob = b64ToBytes(b64);
-        if (blob.length < 44) throw "Ciphertext too short.";
-
-        // Extract components: salt(16) | nonce(12) | tag(16) | ciphertext
+        const blob = base64ToBytes(b64);
         const salt = blob.slice(0,16);
         const nonce = blob.slice(16,28);
-        const tag = blob.slice(28,44);
-        const ct = blob.slice(44);
-
-        const ctWithTag = new Uint8Array(ct.length + tag.length);
-        ctWithTag.set(ct, 0);
-        ctWithTag.set(tag, ct.length);
+        const ct = blob.slice(28);
 
         const key = await deriveKey(pw, salt);
-        const plainBuf = await crypto.subtle.decrypt(
-            { name:"AES-GCM", iv: nonce },
-            key,
-            ctWithTag.buffer
-        );
-
-        out.textContent = bytesToStr(new Uint8Array(plainBuf));
-        status.textContent = "Decryption successful.";
+        const plainBuffer = await crypto.subtle.decrypt({name:"AES-GCM", iv:nonce}, key, ct.buffer);
+        const dec = new TextDecoder().decode(plainBuffer);
+        out.textContent = dec;
     } catch(e) {
-        status.textContent = "Decryption failed.";
-        out.textContent = String(e);
+        out.textContent = "Decryption failed: " + e;
     }
 };
 </script>
