@@ -1,8 +1,8 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Decrypt message</title>
 <style>
 body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; padding:18px; }
@@ -15,38 +15,86 @@ button { padding:10px 14px; font-size:16px; border-radius:8px; }
 <body>
 <h2>Decrypt message</h2>
 <p>Paste the one-line base64 ciphertext you received, enter the passphrase, and click Decrypt.</p>
+
 <label>Base64 ciphertext</label><br>
 <textarea id="b64" rows="6" placeholder="Paste the one-line base64 here"></textarea><br><br>
+
 <label>Passphrase</label><br>
 <input id="pw" type="password" placeholder="Type passphrase"><br><br>
+
 <button id="go">Decrypt</button>
 <p id="status"></p>
 <pre id="out"></pre>
 
-<script src="https://unpkg.com/scrypt-async@1.3.0/scrypt-async.js"></script>
 <script>
-function b64ToBytes(b64){ return Uint8Array.from(atob(b64), c=>c.charCodeAt(0)); }
-function bytesToStr(b){ return new TextDecoder().decode(b); }
-
-function scryptDerive(pass, saltStr, N, r, p, dkLen) {
-  return new Promise((resolve, reject) => {
-    scrypt(pass, saltStr, { N:N, r:r, p:p, dkLen:dkLen, encoding:'binary' }, function(derived){
-      const arr = new Uint8Array(derived.length);
-      for (let i=0;i<derived.length;i++) arr[i] = derived.charCodeAt(i);
-      resolve(arr);
-    });
-  });
+async function deriveKey(passphrase, salt) {
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(passphrase),
+        {name: "PBKDF2"},
+        false,
+        ["deriveKey"]
+    );
+    return crypto.subtle.deriveKey(
+        {
+            name: "PBKDF2",
+            salt: salt,
+            iterations: 32768,
+            hash: "SHA-256"
+        },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["decrypt"]
+    );
 }
 
-async function importAesKey(raw) {
-  return await crypto.subtle.importKey("raw", raw, {name:"AES-GCM"}, false, ["decrypt"]);
+function b64ToBytes(b64){
+    return Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
+}
+
+function bytesToStr(b){
+    return new TextDecoder().decode(b);
 }
 
 document.getElementById('go').onclick = async () => {
-  const out = document.getElementById('out');
-  const status = document.getElementById('status');
-  out.textContent = "";
-  status.textContent = "Working...";
-  try {
-    const b
+    const out = document.getElementById('out');
+    const status = document.getElementById('status');
+    out.textContent = '';
+    status.textContent = 'Working...';
+    try {
+        const b64 = document.getElementById('b64').value.trim();
+        const pw = document.getElementById('pw').value;
+        if (!b64 || !pw) throw "Provide both ciphertext and passphrase.";
 
+        const blob = b64ToBytes(b64);
+        if (blob.length < 44) throw "Ciphertext too short.";
+
+        // Extract components: salt(16) | nonce(12) | tag(16) | ciphertext
+        const salt = blob.slice(0,16);
+        const nonce = blob.slice(16,28);
+        const tag = blob.slice(28,44);
+        const ct = blob.slice(44);
+
+        const ctWithTag = new Uint8Array(ct.length + tag.length);
+        ctWithTag.set(ct, 0);
+        ctWithTag.set(tag, ct.length);
+
+        const key = await deriveKey(pw, salt);
+        const plainBuf = await crypto.subtle.decrypt(
+            { name:"AES-GCM", iv: nonce },
+            key,
+            ctWithTag.buffer
+        );
+
+        out.textContent = bytesToStr(new Uint8Array(plainBuf));
+        status.textContent = "Decryption successful.";
+    } catch(e) {
+        status.textContent = "Decryption failed.";
+        out.textContent = String(e);
+    }
+};
+</script>
+</body>
+</html>
