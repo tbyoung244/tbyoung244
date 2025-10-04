@@ -35,9 +35,9 @@ function bytesToStr(b){
   return new TextDecoder().decode(b);
 }
 
-function scryptDerive(pass, salt, N, r, p, dkLen) {
+function scryptDerive(pass, saltStr, N, r, p, dkLen) {
   return new Promise((resolve, reject) => {
-    scrypt(pass, salt, { N: N, r: r, p: p, dkLen: dkLen, encoding: 'binary' }, function(derived){
+    scrypt(pass, saltStr, { N: N, r: r, p: p, dkLen: dkLen, encoding: 'binary' }, function(derived){
       const arr = new Uint8Array(derived.length);
       for (let i=0;i<derived.length;i++) arr[i] = derived.charCodeAt(i);
       resolve(arr);
@@ -78,7 +78,10 @@ document.getElementById('go').onclick = async () => {
     const p = 1;
     const dkLen = 32;
 
-    const keyBytes = await scryptDerive(pw, Array.from(salt), N, r, p, dkLen);
+    // FIXED: convert salt to string for scrypt-async
+    const saltStr = String.fromCharCode(...salt);
+
+    const keyBytes = await scryptDerive(pw, saltStr, N, r, p, dkLen);
     const cryptoKey = await importAesKey(keyBytes.buffer);
 
     const plainBuf = await crypto.subtle.decrypt({name:"AES-GCM", iv: nonce}, cryptoKey, ctWithTag.buffer);
@@ -93,3 +96,4 @@ document.getElementById('go').onclick = async () => {
 </script>
 </body>
 </html>
+
